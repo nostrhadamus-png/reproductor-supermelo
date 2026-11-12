@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Reproductor Melo
+GenericName=Reproductor de música
+Comment=Reproductor de música local con playlist reordenable
+Exec=@EXEC@
+Path=@DIR@
+Icon=reproductor-melo
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=musica;música;audio;reproductor;local;
+StartupNotify=true
