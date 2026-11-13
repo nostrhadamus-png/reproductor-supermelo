@@ -991,14 +991,16 @@ class MainWindow(Adw.ApplicationWindow):
 class MeloApplication(Adw.Application):
     def __init__(self, music_dir: Path | None = None, state_path: Path | None = None,
                  audio_sink: str | None = None, smoke_test: bool = False,
-                 smoke_mini: bool = False):
+                 smoke_mini: bool = False, smoke_continuity: bool = False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.music_dir = music_dir or get_music_dir()
         self.state_path = state_path
         self.audio_sink = audio_sink
         self.smoke_test = smoke_test
         self.smoke_mini = smoke_mini
+        self.smoke_continuity = smoke_continuity
         self._main_window = None
+        self._continuity: dict = {}
         self.connect("activate", self._on_activate)
 
     def _on_activate(self, _app) -> None:
@@ -1024,14 +1026,42 @@ class MeloApplication(Adw.Application):
             ventana.present()
         if self.smoke_mini:
             GLib.timeout_add(1200, self._smoke_mini_iniciar)
+        if self.smoke_continuity:
+            self._continuity = {
+                "fase": 0,
+                "track": None,
+                "base": 0.0,
+                "marca": time.monotonic(),
+                "resultados": [],
+            }
+            GLib.timeout_add(200, self._continuity_paso)
 
     # --------------------------------------------------------- smoke mini
     def _smoke_mini_iniciar(self) -> bool:
-        ventana = self._main_window
+        self._smoke_mini_esperar(self._main_window, time.monotonic() + 15.0)
+        return False
+
+    def _smoke_mini_esperar(self, ventana, limite: float) -> bool:
         if ventana is None:
             return False
-        ventana.mostrar_mini()
-        GLib.timeout_add(900, self._smoke_mini_comprobar)
+        if time.monotonic() > limite:
+            print("SMOKE-MINI: FALLO: no hubo reproducción a tiempo")
+            self.quit()
+            return False
+        if ventana._scanning or len(ventana.playlist) == 0:
+            GLib.timeout_add(200, self._smoke_mini_esperar, ventana, limite)
+            return False
+        if not ventana.player.is_playing():
+            if not ventana.player.has_media() or ventana.controller.current_id is None:
+                cancion = ventana.playlist.get(ventana.controller.current_id) or ventana.playlist[0]
+                ventana.controller.play_song(cancion.id, autoplay=True)
+            elif ventana.player.is_paused():
+                ventana.player.play()
+        if ventana.player.is_playing() and ventana.player.position() > 0.3:
+            ventana.mostrar_mini()
+            GLib.timeout_add(600, self._smoke_mini_comprobar)
+            return False
+        GLib.timeout_add(200, self._smoke_mini_esperar, ventana, limite)
         return False
 
     def _smoke_mini_comprobar(self) -> bool:
@@ -1046,6 +1076,7 @@ class MeloApplication(Adw.Application):
         print("SMOKE-MINI: título mini:", mini.title_label.get_text() if mini else None)
         print("SMOKE-MINI: canción:", cancion.title if cancion else None)
         print("SMOKE-MINI: reproduciendo:", ventana.player.is_playing() if ventana else None)
+        print("SMOKE-MINI: posición:", round(ventana.player.position(), 2) if ventana else None)
         print("SMOKE-MINI: carátula:", mini.cover_stack.get_visible_child_name() if mini else None)
         print("SMOKE-MINI: x11:", windowing.x11_available())
         print("SMOKE-MINI: posicion viable:", windowing.positioning_supported())
@@ -1068,10 +1099,14 @@ class MeloApplication(Adw.Application):
             antes = ventana.controller.current_id
             mini.btn_play.emit("clicked")
             print("SMOKE-MINI: tras botón play/pausa:", ventana.player.is_playing())
-            mini.btn_siguiente.emit("clicked")
-            print("SMOKE-MINI: tras siguiente cambió:", antes != ventana.controller.current_id)
-            mini.btn_anterior.emit("clicked")
-            print("SMOKE-MINI: tras anterior volvió:", antes == ventana.controller.current_id)
+            mini.btn_play.emit("clicked")
+            if len(ventana.playlist) >= 2:
+                mini.btn_siguiente.emit("clicked")
+                print("SMOKE-MINI: tras siguiente cambió:", antes != ventana.controller.current_id)
+                mini.btn_anterior.emit("clicked")
+                print("SMOKE-MINI: tras anterior volvió:", antes == ventana.controller.current_id)
+            else:
+                print("SMOKE-MINI: siguiente/anterior omitidos: solo hay una pista")
             mini.btn_restaurar.emit("clicked")
             print("SMOKE-MINI: tras restaurar principal visible:", ventana.get_visible(),
                   "mini visible:", mini.get_visible(),
@@ -1082,3 +1117,108 @@ class MeloApplication(Adw.Application):
     def _smoke_mini_cerrar(self) -> bool:
         self.quit()
         return False
+
+    # ---------------------------------------------------- smoke continuidad
+    def _continuity_log(self, fase: str) -> None:
+        from . import windowing
+
+        ventana = self._main_window
+        mini = ventana.mini
+        posicion = ventana.player.position()
+        estable = ventana.controller.current_id == self._continuity["track"]
+        print(
+            f"CONTINUIDAD: fase: {fase} | playing: {ventana.player.is_playing()} "
+            f"| pos: {posicion:.2f} | modo: {ventana.app_state.get('window_mode')} "
+            f"| principal: {ventana.get_visible()} "
+            f"| mini: {bool(mini and mini.get_visible())} | pista_estable: {estable}"
+        )
+        self._continuity["resultados"].append((fase, ventana.player.is_playing(), posicion, estable))
+        if fase == "mini" and mini is not None:
+            xid = windowing.window_xid(mini)
+            above = windowing.get_above(mini)
+            print("CONTINUIDAD: always_on_top:", above, "xid:", xid)
+            if xid:
+                try:
+                    salida = subprocess.run(
+                        ["xprop", "-id", str(xid), "_NET_WM_STATE"],
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                    )
+                    print("CONTINUIDAD: xprop:", salida.stdout.strip() or salida.stderr.strip())
+                except Exception as exc:
+                    print("CONTINUIDAD: xprop error:", exc)
+
+    def _continuity_fallar(self, motivo: str) -> None:
+        print("CONTINUIDAD: FALLO:", motivo)
+        GLib.idle_add(self.quit)
+
+    def _continuity_paso(self) -> bool:
+        ventana = self._main_window
+        if ventana is None:
+            return True
+        estado = self._continuity
+        ahora = time.monotonic()
+        if ahora - estado["marca"] > 15.0:
+            self._continuity_fallar(f"tiempo agotado en la fase {estado['fase']}")
+            return False
+
+        if estado["fase"] == 0:
+            if ventana._scanning or len(ventana.playlist) == 0:
+                return True
+            if not ventana.get_visible():
+                ventana.restaurar_principal()
+            if estado["track"] is None:
+                cancion = ventana.playlist.get(ventana.controller.current_id) or ventana.playlist[0]
+                estado["track"] = cancion.id
+                ventana.controller.play_song(cancion.id, autoplay=True)
+                estado["marca"] = ahora
+                return True
+            if not ventana.player.is_playing() or ventana.player.position() < 0.5:
+                return True
+            self._continuity_log("principal")
+            estado["base"] = ventana.player.position()
+            ventana.mostrar_mini()
+            estado["fase"] = 1
+            estado["marca"] = ahora
+            return True
+
+        if estado["fase"] == 1:
+            if ventana.controller.current_id != estado["track"]:
+                self._continuity_fallar("la pista cambió al entrar en modo mini")
+                return False
+            mini_visible = bool(ventana.mini and ventana.mini.get_visible())
+            if (ventana.player.is_playing() and mini_visible and not ventana.get_visible()
+                    and ventana.player.position() >= estado["base"] + 0.8):
+                self._continuity_log("mini")
+                estado["base"] = ventana.player.position()
+                ventana.restaurar_principal()
+                estado["fase"] = 2
+                estado["marca"] = ahora
+            return True
+
+        if ventana.controller.current_id != estado["track"]:
+            self._continuity_fallar("la pista cambió al volver a la ventana principal")
+            return False
+        mini_visible = bool(ventana.mini and ventana.mini.get_visible())
+        if (ventana.player.is_playing() and ventana.get_visible() and not mini_visible
+                and ventana.player.position() >= estado["base"] + 0.8):
+            self._continuity_log("principal_final")
+            resultados = estado["resultados"]
+            posiciones = [r[2] for r in resultados]
+            ok = (
+                len(resultados) == 3
+                and all(r[1] and r[3] for r in resultados)
+                and posiciones[0] < posiciones[1] < posiciones[2]
+            )
+            if ok:
+                print(
+                    "CONTINUIDAD: OK — playing=True y posición creciente "
+                    f"({posiciones[0]:.2f} < {posiciones[1]:.2f} < {posiciones[2]:.2f}) "
+                    "en principal, mini y principal."
+                )
+            else:
+                print("CONTINUIDAD: FALLO — revisar los resultados anteriores.")
+            GLib.idle_add(self.quit)
+            return False
+        return True

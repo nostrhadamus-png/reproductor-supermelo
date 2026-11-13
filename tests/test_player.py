@@ -99,6 +99,18 @@ class PlayerTest(unittest.TestCase):
         self.assertTrue(esperar(lambda: errores, 8), "no se emitió error")
         player.shutdown()
 
+    def test_sink_con_propiedades_reproduce_en_tiempo_real(self):
+        player = Player(audio_sink="fakesink sync=true")
+        player.load(str(self.wav_largo), play=True)
+        self.assertTrue(
+            esperar(lambda: player.is_playing() and player.position() > 0.2, 8),
+            "el sink con propiedades no arrancó",
+        )
+        p1 = player.position()
+        pump(0.4)
+        self.assertGreater(player.position(), p1, "la posición no avanzó en tiempo real")
+        player.shutdown()
+
 
 class PlaybackControllerTest(unittest.TestCase):
     @classmethod

@@ -23,7 +23,12 @@ Opciones útiles:
 python3 -m reproductor --scan-only          # solo escanear e imprimir la biblioteca
 python3 -m reproductor --music-dir /ruta    # usar otra carpeta de música
 python3 -m reproductor --audio-sink fakesink --smoke-test   # prueba sin audio
+python3 -m reproductor --audio-sink "fakesink sync=true" --smoke-mini       # mini + siempre encima
+python3 -m reproductor --audio-sink "fakesink sync=true" --smoke-continuity # no se corta al alternar
 ```
+
+`fakesink sync=true` reproduce en silencio a velocidad real (la posición avanza),
+a diferencia de `fakesink` a secas, que vacía el audio de inmediato.
 
 ## Instalar el lanzador de escritorio
 
@@ -69,15 +74,27 @@ Comprobado con `gst-inspect-1.0`: `mpg123audiodec`, `avdec_mp3`, `flacdec`,
 - **Pestaña Ecualizador**: 10 bandas de −12 a +12 dB (paso 0,5), presets
   (Plano, Graves, Agudos, Rock, Pop, Clásica, Voz, Personalizado), interruptor
   de activación y botón Restablecer. Los ajustes se aplican en tiempo real.
+- **Mini reproductor**: el botón de la cabecera oculta la ventana principal y
+  muestra una ventana compacta con carátula, título, play/pausa, anterior,
+  siguiente y restauración. Comparte el mismo motor y la misma playlist, así que
+  alternar principal ↔ mini no corta ni reinicia la reproducción. El menú del
+  mini permite activar **Siempre encima**.
 
 ## Persistencia
 
 El estado se guarda en `~/.local/share/reproductor-melo/state.json` (o
 `$XDG_DATA_HOME/reproductor-melo/state.json`): orden personalizado, última canción
-seleccionada, canción cargada, volumen, posición y estado del ecualizador
-(activado, preset y ganancias de las 10 bandas). La escritura es atómica
+seleccionada, canción cargada, volumen, posición, estado del ecualizador
+(activado, preset y ganancias de las 10 bandas), modo de ventana (`main` o `mini`),
+estado de **Siempre encima** y posición del mini. La escritura es atómica
 (archivo temporal + `os.replace`). Si el JSON falta o está corrupto se arranca con
 valores por defecto.
+
+El modo mini y «Siempre encima» se guardan automáticamente. La posición del mini
+solo se guarda y restaura en X11 real; en Wayland (incluido XWayland) el compositor
+decide dónde colocar la ventana, así que la app no promete esa persistencia.
+«Siempre encima» usa EWMH y funciona en X11/XWayland; en Wayland puro el
+interruptor se muestra desactivado con una explicación.
 
 ## Arquitectura
 
@@ -85,11 +102,14 @@ valores por defecto.
 reproductor/
   library.py    # carpeta Música XDG, escaneo recursivo, metadatos y deduplicado
   playlist.py   # orden, mover, siguiente/anterior (lógica pura, testeable)
-  state.py      # JSON atómico en rutas XDG
+  state.py      # JSON atómico en rutas XDG + validación del modo mini
   equalizer.py  # bandas, presets y utilidades puras del ecualizador
+  covers.py     # carátulas incrustadas o cover/folder/front/albumart de la carpeta
   player.py     # envoltorio de GStreamer playbin3/playbin + equalizer-10bands
   playback.py   # secuenciación: auto-avance, errores, orden dinámico
-  app.py        # interfaz GTK4 + libadwaita: Biblioteca y Ecualizador
+  windowing.py  # X11 opcional: _NET_WM_STATE_ABOVE, posición de ventana
+  miniplayer.py # ventana compacta que comparte Player, Playlist y estado
+  app.py        # interfaz GTK4 + libadwaita: Biblioteca, Ecualizador y mini
   __main__.py   # CLI y arranque
 assets/         # icono SVG
 data/           # plantilla .desktop
@@ -126,6 +146,18 @@ Prueba de humo de la interfaz real:
 ```bash
 python3 -m reproductor --audio-sink fakesink --smoke-test
 ```
+
+Prueba del mini reproductor y de continuidad (reproduce en silencio a velocidad
+real, alterna principal → mini → principal y comprueba `playing=True` con la
+posición creciente en las tres fases):
+
+```bash
+python3 -m reproductor --audio-sink "fakesink sync=true" --smoke-mini
+python3 -m reproductor --audio-sink "fakesink sync=true" --smoke-continuity
+```
+
+La prueba de continuidad necesita una pista más larga que la duración de la
+prueba (unos 5 segundos); si la canción termina, el auto-avance cambiaría de pista.
 
 ## Notas
 

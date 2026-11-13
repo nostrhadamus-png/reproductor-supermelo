@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--audio-sink",
         default=None,
-        help="Sumidero GStreamer para depuración (p. ej. fakesink).",
+        help="Sumidero GStreamer para depuración (p. ej. fakesink o 'fakesink sync=true').",
     )
     parser.add_argument(
         "--scan-only",
@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--smoke-mini",
         action="store_true",
         help="Probar el mini reproductor (modo, botones y siempre encima) y cerrar.",
+    )
+    parser.add_argument(
+        "--smoke-continuity",
+        action="store_true",
+        help="Reproducir y alternar principal/mini/principal comprobando que no se corta.",
     )
     return parser
 
@@ -81,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         audio_sink=args.audio_sink,
         smoke_test=args.smoke_test,
         smoke_mini=args.smoke_mini,
+        smoke_continuity=args.smoke_continuity,
     )
     return app.run([sys.argv[0]])
 

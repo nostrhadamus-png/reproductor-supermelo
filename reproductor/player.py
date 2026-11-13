@@ -37,7 +37,7 @@ class Player(GObject.GObject):
         self._failed = False
 
         if audio_sink:
-            sink = Gst.ElementFactory.make(audio_sink, "sink")
+            sink = self._crear_sink(audio_sink)
             if sink is not None:
                 self._player.set_property("audio-sink", sink)
 
@@ -48,6 +48,20 @@ class Player(GObject.GObject):
         bus = self._player.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_message)
+
+    @staticmethod
+    def _crear_sink(descripcion: str):
+        """Acepta un nombre simple o una descripción con propiedades.
+
+        Ejemplo: ``fakesink`` (vacía el buffer lo antes posible) o
+        ``fakesink sync=true`` (silencio, pero a velocidad real).
+        """
+        try:
+            if " " in descripcion or "=" in descripcion:
+                return Gst.parse_bin_from_description(descripcion, True)
+            return Gst.ElementFactory.make(descripcion, "sink")
+        except Exception:
+            return None
 
     # ------------------------------------------------------------- mensajes
     def _on_message(self, _bus, message: Gst.Message) -> None:
