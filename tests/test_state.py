@@ -28,6 +28,8 @@ class StateTest(unittest.TestCase):
             },
             "window_mode": "mini",
             "mini": {"always_on_top": False, "position": [120, 80]},
+            "color_scheme": "dark",
+            "palette": "ocean",
         }
         self.assertTrue(save_state(estado, self.path))
         self.assertTrue(self.path.exists())
@@ -126,8 +128,29 @@ class StateTest(unittest.TestCase):
         estado = load_state(self.path)
         self.assertEqual(estado["window_mode"], "main")
         self.assertEqual(estado["mini"], {"always_on_top": True, "position": None})
+        self.assertEqual(estado["color_scheme"], "system")
+        self.assertEqual(estado["palette"], "default")
         self.assertEqual(estado["order"], ["/a.mp3"])
         self.assertEqual(estado["volume"], 0.5)
+
+    def test_persiste_apariencia(self):
+        estado = dict(DEFAULT_STATE)
+        estado["color_scheme"] = "light"
+        estado["palette"] = "forest"
+        self.assertTrue(save_state(estado, self.path))
+        recuperado = load_state(self.path)
+        self.assertEqual(recuperado["color_scheme"], "light")
+        self.assertEqual(recuperado["palette"], "forest")
+
+    def test_sanitiza_apariencia_invalida(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps({"color_scheme": "sepia", "palette": "inventada"}),
+            encoding="utf-8",
+        )
+        estado = load_state(self.path)
+        self.assertEqual(estado["color_scheme"], "system")
+        self.assertEqual(estado["palette"], "default")
 
     def test_persiste_modo_mini_y_siempre_encima(self):
         estado = dict(DEFAULT_STATE)

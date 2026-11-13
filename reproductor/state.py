@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from .equalizer import PRESET_NAMES, default_equalizer_state, sanitize_gains
+from .theme import DEFAULT_PALETTE, DEFAULT_SCHEME, validate_palette, validate_scheme
 
 APP_NAME = "reproductor-melo"
 
@@ -23,6 +24,8 @@ DEFAULT_STATE = {
     "equalizer": default_equalizer_state(),
     "window_mode": "main",
     "mini": {"always_on_top": True, "position": None},
+    "color_scheme": DEFAULT_SCHEME,
+    "palette": DEFAULT_PALETTE,
 }
 
 
@@ -146,6 +149,9 @@ def _normalize(raw) -> dict:
         if isinstance(mini_guardado.get("always_on_top"), bool):
             estado["mini"]["always_on_top"] = mini_guardado["always_on_top"]
         estado["mini"]["position"] = _normalize_position(mini_guardado.get("position"))
+
+    estado["color_scheme"] = validate_scheme(raw.get("color_scheme"))
+    estado["palette"] = validate_palette(raw.get("palette"))
 
     eq_guardado = raw.get("equalizer")
     if isinstance(eq_guardado, dict):
