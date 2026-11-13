@@ -79,6 +79,12 @@ Comprobado con `gst-inspect-1.0`: `mpg123audiodec`, `avdec_mp3`, `flacdec`,
   siguiente y restauración. Comparte el mismo motor y la misma playlist, así que
   alternar principal ↔ mini no corta ni reinicia la reproducción. El menú del
   mini permite activar **Siempre encima**.
+- **Apariencia** (menú principal): esquema **Sistema / Claro / Oscuro** y seis
+  paletas de acento (Predeterminada, Océano, Bosque, Atardecer, Orquídea y
+  Medianoche). Cada paleta incluye variantes clara y oscura; el cambio se aplica
+  al instante a la ventana principal y al mini, sin reiniciar ni cortar la
+  reproducción. «Sistema» sigue el modo claro/oscuro del escritorio en tiempo
+  real y «Predeterminada» respeta el acento configurado en GNOME.
 
 ## Persistencia
 
@@ -86,9 +92,10 @@ El estado se guarda en `~/.local/share/reproductor-melo/state.json` (o
 `$XDG_DATA_HOME/reproductor-melo/state.json`): orden personalizado, última canción
 seleccionada, canción cargada, volumen, posición, estado del ecualizador
 (activado, preset y ganancias de las 10 bandas), modo de ventana (`main` o `mini`),
-estado de **Siempre encima** y posición del mini. La escritura es atómica
-(archivo temporal + `os.replace`). Si el JSON falta o está corrupto se arranca con
-valores por defecto.
+estado de **Siempre encima**, posición del mini y apariencia (`color_scheme` y
+`palette`). La escritura es atómica (archivo temporal + `os.replace`). Si el JSON
+falta o está corrupto se arranca con valores por defecto; un esquema o una paleta
+desconocidos se sanean a `system`/`default`.
 
 El modo mini y «Siempre encima» se guardan automáticamente. La posición del mini
 solo se guarda y restaura en X11 real; en Wayland (incluido XWayland) el compositor
@@ -109,7 +116,9 @@ reproductor/
   playback.py   # secuenciación: auto-avance, errores, orden dinámico
   windowing.py  # X11 opcional: _NET_WM_STATE_ABOVE, posición de ventana
   miniplayer.py # ventana compacta que comparte Player, Playlist y estado
-  app.py        # interfaz GTK4 + libadwaita: Biblioteca, Ecualizador y mini
+  theme.py      # paletas, contraste WCAG AA y generación de CSS (sin GTK)
+  style.css     # estilos estáticos; los colores se inyectan en tiempo de ejecución
+  app.py        # interfaz GTK4 + libadwaita: Biblioteca, Ecualizador, mini y Apariencia
   __main__.py   # CLI y arranque
 assets/         # icono SVG
 data/           # plantilla .desktop
@@ -140,6 +149,12 @@ tras reinicio y que los `sha256` de los archivos no cambian.
 El ecualizador usa `equalizer-10bands` conectado a `audio-filter` de playbin;
 viene en `gstreamer1-plugins-good` (ya listado). Las pruebas también comprueban
 bandas, presets, cambio en tiempo real y persistencia.
+
+El sistema de apariencia tiene pruebas propias (`tests/test_theme.py`): valida
+todas las paletas y esquemas, genera el CSS y lo carga con `Gtk.CssProvider`, y
+comprueba el contraste WCAG AA de cada par de colores, incluidos los acentos del
+sistema. La persistencia de `color_scheme`/`palette` y el saneado de valores
+inválidos se cubren en `tests/test_state.py`.
 
 Prueba de humo de la interfaz real:
 

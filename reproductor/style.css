@@ -1,0 +1,8 @@
+.playing-row { background-color: alpha(@accent_bg_color, 0.18); }
+.drop-highlight { background-color: alpha(@accent_bg_color, 0.35); }
+.now-title { font-weight: bold; }
+.time-label { font-feature-settings: "tnum"; }
+.dim-label { opacity: 0.7; }
+.mini-player { border-radius: 12px; }
+.mini-cover { border-radius: 8px; }
+.palette-swatch { border-radius: 6px; }

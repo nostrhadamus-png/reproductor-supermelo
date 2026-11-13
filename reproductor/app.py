@@ -16,6 +16,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from . import theme
 from .covers import get_cover_bytes  # noqa: E402
 from .equalizer import (
     CUSTOM_PRESET,
@@ -36,14 +37,7 @@ from .state import load_state, save_state  # noqa: E402
 
 APP_ID = "io.github.melo.Reproductor"
 ICON_NAME = "reproductor-melo"
-
-CSS = """
-.playing-row { background-color: alpha(@accent_bg_color, 0.18); }
-.drop-highlight { background-color: alpha(@accent_bg_color, 0.35); }
-.now-title { font-weight: bold; }
-.time-label { font-feature-settings: "tnum"; }
-.dim-label { opacity: 0.7; }
-"""
+STYLE_PATH = Path(__file__).with_name("style.css")
 
 
 def format_time(seconds: float) -> str:
@@ -152,6 +146,144 @@ class SongRow(Gtk.ListBoxRow):
         return True
 
 
+def _rgba_desde_hex(valor: str):
+    if not theme.valid_hex(valor):
+        valor = "#ffffff"
+    rojo, verde, azul = (int(valor[i : i + 2], 16) / 255.0 for i in (1, 3, 5))
+    return rojo, verde, azul
+
+
+def _hex_desde_rgba(rgba) -> str | None:
+    if rgba is None:
+        return None
+    return "#%02x%02x%02x" % (
+        round(max(0.0, min(1.0, rgba.red)) * 255),
+        round(max(0.0, min(1.0, rgba.green)) * 255),
+        round(max(0.0, min(1.0, rgba.blue)) * 255),
+    )
+
+
+class AppearanceDialog(Adw.PreferencesDialog):
+    """Selector de esquema y paleta con muestra y aplicación inmediata."""
+
+    def __init__(self, window: "MainWindow"):
+        super().__init__()
+        self._window = window
+        self._swatches: list[Gtk.DrawingArea] = []
+        self._checks: dict[str, Gtk.Image] = {}
+        self._style_handlers: list[int] = []
+
+        self.set_title("Apariencia")
+        pagina = Adw.PreferencesPage()
+        pagina.set_title("Apariencia")
+        pagina.set_icon_name("preferences-desktop-theme-symbolic")
+        self.add(pagina)
+
+        grupo_esquema = Adw.PreferencesGroup()
+        grupo_esquema.set_title("Esquema de color")
+        grupo_esquema.set_description(
+            "«Sistema» sigue el cambio claro/oscuro del escritorio en tiempo real."
+        )
+        self.scheme_row = Adw.ComboRow(title="Esquema")
+        self.scheme_row.set_model(
+            Gtk.StringList.new([theme.SCHEME_LABELS[s] for s in theme.SCHEMES])
+        )
+        esquema_actual, paleta_actual = self._window.apariencia_actual()
+        self.scheme_row.set_selected(theme.SCHEMES.index(esquema_actual))
+        self.scheme_row.connect("notify::selected", self._on_scheme_changed)
+        grupo_esquema.add(self.scheme_row)
+        pagina.add(grupo_esquema)
+
+        grupo_paleta = Adw.PreferencesGroup()
+        grupo_paleta.set_title("Paleta de acento")
+        grupo_paleta.set_description(
+            "Se aplica al instante a la ventana principal y al mini reproductor."
+        )
+        for paleta in theme.PALETTE_ORDER:
+            fila = Adw.ActionRow(title=theme.PALETTES[paleta]["label"])
+            fila.set_activatable(True)
+
+            muestra = Gtk.DrawingArea()
+            muestra.set_content_width(42)
+            muestra.set_content_height(24)
+            muestra.set_valign(Gtk.Align.CENTER)
+            muestra.add_css_class("palette-swatch")
+            muestra.set_tooltip_text(
+                f"Muestra de colores de la paleta {theme.PALETTES[paleta]['label']}"
+            )
+            muestra.set_draw_func(self._draw_swatch, paleta)
+            self._swatches.append(muestra)
+
+            marca = Gtk.Image.new_from_icon_name("object-select-symbolic")
+            marca.set_valign(Gtk.Align.CENTER)
+            marca.add_css_class("accent")
+            marca.set_visible(paleta == paleta_actual)
+            self._checks[paleta] = marca
+
+            sufijo = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            sufijo.append(muestra)
+            sufijo.append(marca)
+            fila.add_suffix(sufijo)
+            fila.connect("activated", self._on_palette_selected, paleta)
+            grupo_paleta.add(fila)
+        pagina.add(grupo_paleta)
+
+        sm = Adw.StyleManager.get_default()
+        self._style_handlers.append(sm.connect("notify::dark", self._redibujar))
+        self._style_handlers.append(sm.connect("notify::accent-color", self._redibujar))
+        self.connect("closed", self._on_closed)
+
+    def _acento_sistema(self) -> str | None:
+        rgba = Adw.StyleManager.get_default().get_accent_color_rgba()
+        return _hex_desde_rgba(rgba)
+
+    def _sistema_oscuro(self) -> bool:
+        return bool(Adw.StyleManager.get_default().get_dark())
+
+    def _draw_swatch(self, area, cr, width, height, paleta: str) -> None:
+        esquema, _ = self._window.apariencia_actual()
+        fondo, texto, acento = theme.palette_preview(
+            paleta,
+            esquema,
+            system_accent=self._acento_sistema(),
+            system_dark=self._sistema_oscuro(),
+        )
+        ancho, alto = float(width), float(height)
+        cr.set_source_rgb(*_rgba_desde_hex(fondo))
+        cr.rectangle(0, 0, ancho, alto)
+        cr.fill()
+        cr.set_source_rgb(*_rgba_desde_hex(acento))
+        cr.rectangle(ancho * 0.62, 0, ancho * 0.38, alto)
+        cr.fill()
+        cr.set_source_rgb(*_rgba_desde_hex(texto))
+        cr.rectangle(ancho * 0.08, alto * 0.30, ancho * 0.42, alto * 0.16)
+        cr.fill()
+        cr.rectangle(ancho * 0.08, alto * 0.56, ancho * 0.28, alto * 0.12)
+        cr.fill()
+
+    def _redibujar(self, *_args) -> None:
+        for muestra in self._swatches:
+            muestra.queue_draw()
+
+    def _on_scheme_changed(self, fila: Adw.ComboRow, _pspec) -> None:
+        indice = fila.get_selected()
+        if not 0 <= indice < len(theme.SCHEMES):
+            return
+        self._window.aplicar_apariencia(scheme=theme.SCHEMES[indice])
+        self._redibujar()
+
+    def _on_palette_selected(self, _fila: Adw.ActionRow, paleta: str) -> None:
+        self._window.aplicar_apariencia(palette=paleta)
+        for nombre, marca in self._checks.items():
+            marca.set_visible(nombre == paleta)
+
+    def _on_closed(self, *_args) -> None:
+        sm = Adw.StyleManager.get_default()
+        for handler in self._style_handlers:
+            sm.disconnect(handler)
+        self._style_handlers.clear()
+
+
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, music_dir, state_path=None, audio_sink=None, smoke_test=False, **kwargs):
         super().__init__(**kwargs)
@@ -172,6 +304,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._rows: dict[str, SongRow] = {}
         self._scanning = False
         self.mini = None
+        self._appearance_dialog = None
         self._cover_cache: OrderedDict[str, object | None] = OrderedDict()
         self._cover_cache_max = 48
 
@@ -227,12 +360,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         menu = Gio.Menu()
         menu.append("Volver a escanear", "win.rescan")
+        menu.append("Apariencia", "win.appearance")
         menu.append("Acerca de Reproductor Melo", "win.about")
         boton_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         boton_menu.set_tooltip_text("Menú")
         self.header.pack_end(boton_menu)
 
         self._accion("rescan", self.reescanear)
+        self._accion("appearance", self._mostrar_apariencia)
         self._accion("about", self._mostrar_acerca)
 
         self.listbox = Gtk.ListBox()
@@ -914,6 +1049,26 @@ class MainWindow(Adw.ApplicationWindow):
     def reescanear(self) -> None:
         self._start_scan(initial=False)
 
+    def apariencia_actual(self) -> tuple[str, str]:
+        return (
+            theme.validate_scheme(self.app_state.get("color_scheme")),
+            theme.validate_palette(self.app_state.get("palette")),
+        )
+
+    def aplicar_apariencia(self, scheme: str | None = None, palette: str | None = None) -> None:
+        if scheme is not None:
+            self.app_state["color_scheme"] = theme.validate_scheme(scheme)
+        if palette is not None:
+            self.app_state["palette"] = theme.validate_palette(palette)
+        aplicacion = self.get_application()
+        if isinstance(aplicacion, MeloApplication):
+            aplicacion.aplicar_apariencia(self.app_state)
+        self._schedule_save()
+
+    def _mostrar_apariencia(self) -> None:
+        self._appearance_dialog = AppearanceDialog(self)
+        self._appearance_dialog.present(self)
+
     def _mostrar_acerca(self) -> None:
         dialogo = Adw.AboutDialog()
         dialogo.set_application_name("Reproductor Melo")
@@ -1001,14 +1156,16 @@ class MeloApplication(Adw.Application):
         self.smoke_continuity = smoke_continuity
         self._main_window = None
         self._continuity: dict = {}
+        self._theme_provider = None
+        self._style_handlers: list[int] = []
         self.connect("activate", self._on_activate)
 
     def _on_activate(self, _app) -> None:
         Gtk.Window.set_default_icon_name(ICON_NAME)
-        proveedor = Gtk.CssProvider()
-        proveedor.load_from_string(CSS)
         pantalla = Gdk.Display.get_default()
         if pantalla is not None:
+            proveedor = Gtk.CssProvider()
+            proveedor.load_from_path(str(STYLE_PATH))
             Gtk.StyleContext.add_provider_for_display(
                 pantalla, proveedor, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
@@ -1020,6 +1177,13 @@ class MeloApplication(Adw.Application):
             smoke_test=self.smoke_test,
         )
         self._main_window = ventana
+        self.aplicar_apariencia(ventana.app_state)
+        sm = Adw.StyleManager.get_default()
+        if not self._style_handlers:
+            self._style_handlers.append(sm.connect("notify::dark", self._on_system_style_changed))
+            self._style_handlers.append(
+                sm.connect("notify::accent-color", self._on_system_style_changed)
+            )
         if ventana.app_state.get("window_mode") == "mini":
             ventana.mostrar_mini()
         else:
@@ -1035,6 +1199,49 @@ class MeloApplication(Adw.Application):
                 "resultados": [],
             }
             GLib.timeout_add(200, self._continuity_paso)
+
+    @staticmethod
+    def _adw_scheme(scheme: str):
+        return {
+            "system": Adw.ColorScheme.DEFAULT,
+            "light": Adw.ColorScheme.FORCE_LIGHT,
+            "dark": Adw.ColorScheme.FORCE_DARK,
+        }[theme.validate_scheme(scheme)]
+
+    @staticmethod
+    def _system_accent_hex() -> str | None:
+        rgba = Adw.StyleManager.get_default().get_accent_color_rgba()
+        return _hex_desde_rgba(rgba)
+
+    def aplicar_apariencia(self, estado: dict) -> None:
+        scheme = theme.validate_scheme(estado.get("color_scheme"))
+        palette = theme.validate_palette(estado.get("palette"))
+        sm = Adw.StyleManager.get_default()
+        sm.set_color_scheme(self._adw_scheme(scheme))
+        css = theme.generate_css(
+            palette,
+            scheme,
+            system_accent=self._system_accent_hex(),
+            system_dark=bool(sm.get_dark()),
+        )
+        pantalla = Gdk.Display.get_default()
+        if pantalla is None:
+            return
+        proveedor = Gtk.CssProvider()
+        proveedor.load_from_string(css)
+        if self._theme_provider is not None:
+            try:
+                Gtk.StyleContext.remove_provider_for_display(pantalla, self._theme_provider)
+            except Exception:
+                pass
+        Gtk.StyleContext.add_provider_for_display(
+            pantalla, proveedor, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self._theme_provider = proveedor
+
+    def _on_system_style_changed(self, *_args) -> None:
+        if self._main_window is not None:
+            self.aplicar_apariencia(self._main_window.app_state)
 
     # --------------------------------------------------------- smoke mini
     def _smoke_mini_iniciar(self) -> bool:
