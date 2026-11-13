@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Abrir la interfaz, comprobar el arranque y cerrar automáticamente.",
     )
+    parser.add_argument(
+        "--smoke-mini",
+        action="store_true",
+        help="Probar el mini reproductor (modo, botones y siempre encima) y cerrar.",
+    )
     return parser
 
 
@@ -75,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         state_path=args.state_path,
         audio_sink=args.audio_sink,
         smoke_test=args.smoke_test,
+        smoke_mini=args.smoke_mini,
     )
     return app.run([sys.argv[0]])
 

@@ -12,6 +12,8 @@ from .equalizer import PRESET_NAMES, default_equalizer_state, sanitize_gains
 
 APP_NAME = "reproductor-melo"
 
+WINDOW_MODES = ("main", "mini")
+
 DEFAULT_STATE = {
     "order": [],
     "last_song": None,
@@ -19,7 +21,13 @@ DEFAULT_STATE = {
     "volume": 1.0,
     "position": 0.0,
     "equalizer": default_equalizer_state(),
+    "window_mode": "main",
+    "mini": {"always_on_top": True, "position": None},
 }
+
+
+def _default_mini_state() -> dict:
+    return {"always_on_top": True, "position": None}
 
 
 def _default_state() -> dict:
@@ -27,6 +35,7 @@ def _default_state() -> dict:
     estado = dict(DEFAULT_STATE)
     estado["order"] = []
     estado["equalizer"] = default_equalizer_state()
+    estado["mini"] = _default_mini_state()
     return estado
 
 
@@ -41,6 +50,59 @@ def default_state_path() -> Path:
 
 def _clamp(value: float, minimo: float, maximo: float) -> float:
     return max(minimo, min(maximo, value))
+
+
+def _numero_finito(valor) -> bool:
+    try:
+        return math.isfinite(float(valor))
+    except (TypeError, ValueError):
+        return False
+
+
+def _normalize_position(valor):
+    """Acepta solo [x, y] finitos; cualquier otra cosa se descarta."""
+    if not isinstance(valor, (list, tuple)) or len(valor) != 2:
+        return None
+    if not (_numero_finito(valor[0]) and _numero_finito(valor[1])):
+        return None
+    return [int(round(float(valor[0]))), int(round(float(valor[1])))]
+
+
+def validate_mini_position(position, bounds, size, margin: int = 0):
+    """Ajusta una posición guardada para que la ventana quede visible.
+
+    ``bounds`` es ``(x, y, ancho, alto)`` del monitor y ``size`` el tamaño de la
+    ventana. Devuelve ``(x, y)`` o ``None`` si los datos no son válidos.
+    """
+    punto = _normalize_position(position)
+    if punto is None or not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+        return None
+    if not isinstance(size, (list, tuple)) or len(size) != 2:
+        return None
+    try:
+        bx, by, bw, bh = (float(v) for v in bounds)
+        vw, vh = (float(v) for v in size)
+        margen = max(0.0, float(margin))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (bx, by, bw, bh, vw, vh, margen)):
+        return None
+    if bw <= 0 or bh <= 0 or vw <= 0 or vh <= 0:
+        return None
+
+    minimo_x = bx + margen
+    minimo_y = by + margen
+    maximo_x = bx + bw - vw - margen
+    maximo_y = by + bh - vh - margen
+    if maximo_x < minimo_x:
+        x = int(round(minimo_x))
+    else:
+        x = int(round(_clamp(punto[0], minimo_x, maximo_x)))
+    if maximo_y < minimo_y:
+        y = int(round(minimo_y))
+    else:
+        y = int(round(_clamp(punto[1], minimo_y, maximo_y)))
+    return x, y
 
 
 def _normalize(raw) -> dict:
@@ -74,6 +136,16 @@ def _normalize(raw) -> dict:
         estado["position"] = max(0.0, posicion) if math.isfinite(posicion) else 0.0
     except (TypeError, ValueError):
         estado["position"] = 0.0
+
+    modo = raw.get("window_mode")
+    if isinstance(modo, str) and modo in WINDOW_MODES:
+        estado["window_mode"] = modo
+
+    mini_guardado = raw.get("mini")
+    if isinstance(mini_guardado, dict):
+        if isinstance(mini_guardado.get("always_on_top"), bool):
+            estado["mini"]["always_on_top"] = mini_guardado["always_on_top"]
+        estado["mini"]["position"] = _normalize_position(mini_guardado.get("position"))
 
     eq_guardado = raw.get("equalizer")
     if isinstance(eq_guardado, dict):

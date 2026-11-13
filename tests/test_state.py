@@ -26,6 +26,8 @@ class StateTest(unittest.TestCase):
                 "preset": "Plano",
                 "gains": [0.0] * 10,
             },
+            "window_mode": "mini",
+            "mini": {"always_on_top": False, "position": [120, 80]},
         }
         self.assertTrue(save_state(estado, self.path))
         self.assertTrue(self.path.exists())
@@ -114,6 +116,74 @@ class StateTest(unittest.TestCase):
         self.assertEqual(recuperado["order"], guardado["order"])
         self.assertEqual(recuperado["last_song"], "/a.mp3")
         self.assertEqual(recuperado["position"], 12.0)
+
+    def test_estado_antiguo_sin_mini_carga_con_valores_por_defecto(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps({"order": ["/a.mp3"], "volume": 0.5}),
+            encoding="utf-8",
+        )
+        estado = load_state(self.path)
+        self.assertEqual(estado["window_mode"], "main")
+        self.assertEqual(estado["mini"], {"always_on_top": True, "position": None})
+        self.assertEqual(estado["order"], ["/a.mp3"])
+        self.assertEqual(estado["volume"], 0.5)
+
+    def test_persiste_modo_mini_y_siempre_encima(self):
+        estado = dict(DEFAULT_STATE)
+        estado["window_mode"] = "mini"
+        estado["mini"] = {"always_on_top": False, "position": [-120, 40]}
+        self.assertTrue(save_state(estado, self.path))
+        recuperado = load_state(self.path)
+        self.assertEqual(recuperado["window_mode"], "mini")
+        self.assertEqual(recuperado["mini"]["always_on_top"], False)
+        self.assertEqual(recuperado["mini"]["position"], [-120, 40])
+
+    def test_sanitiza_mini_invalido(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    "window_mode": "pantalla-completa",
+                    "mini": {"always_on_top": "sí", "position": ["x", 2]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        estado = load_state(self.path)
+        self.assertEqual(estado["window_mode"], "main")
+        self.assertEqual(estado["mini"], {"always_on_top": True, "position": None})
+
+    def test_valida_posicion_dentro_de_pantalla(self):
+        from reproductor.state import validate_mini_position
+
+        self.assertEqual(
+            validate_mini_position([100, 200], (0, 0, 1920, 1080), (340, 100)),
+            (100, 200),
+        )
+        self.assertEqual(
+            validate_mini_position([5000, -50], (0, 0, 1920, 1080), (340, 100)),
+            (1580, 0),
+        )
+        self.assertEqual(
+            validate_mini_position([100, 100], (1920, 0, 1280, 720), (340, 100)),
+            (1920, 100),
+        )
+        self.assertIsNone(validate_mini_position(["x", 1], (0, 0, 1920, 1080), (340, 100)))
+        self.assertIsNone(validate_mini_position([1, 2], (0, 0, 0, 0), (340, 100)))
+        self.assertIsNone(validate_mini_position(None, (0, 0, 1920, 1080), (340, 100)))
+
+    def test_valida_posicion_con_margen(self):
+        from reproductor.state import validate_mini_position
+
+        self.assertEqual(
+            validate_mini_position([0, 0], (0, 0, 1920, 1080), (340, 100), margin=8),
+            (8, 8),
+        )
+        self.assertEqual(
+            validate_mini_position([9999, 9999], (0, 0, 1920, 1080), (340, 100), margin=8),
+            (1572, 972),
+        )
 
 
 if __name__ == "__main__":

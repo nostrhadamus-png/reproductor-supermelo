@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 import gi
@@ -14,6 +16,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from .covers import get_cover_bytes  # noqa: E402
 from .equalizer import (
     CUSTOM_PRESET,
     FREQUENCIES,
@@ -25,6 +28,7 @@ from .equalizer import (
     sanitize_gains,
 )
 from .library import Song, get_music_dir, scan_library  # noqa: E402
+from .miniplayer import MiniPlayer  # noqa: E402
 from .playback import PlaybackController  # noqa: E402
 from .player import Player  # noqa: E402
 from .playlist import Playlist  # noqa: E402
@@ -167,6 +171,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._volume_source = 0
         self._rows: dict[str, SongRow] = {}
         self._scanning = False
+        self.mini = None
+        self._cover_cache: OrderedDict[str, object | None] = OrderedDict()
+        self._cover_cache_max = 48
 
         self.app_state = load_state(self.state_path)
         eq_guardado = self.app_state.get("equalizer") or default_equalizer_state()
@@ -212,6 +219,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.btn_escanear.set_tooltip_text("Volver a escanear la carpeta Música")
         self.btn_escanear.connect("clicked", lambda *_: self.reescanear())
         self.header.pack_end(self.btn_escanear)
+
+        self.btn_mini = Gtk.Button(icon_name="window-minimize-symbolic")
+        self.btn_mini.set_tooltip_text("Mini reproductor")
+        self.btn_mini.connect("clicked", lambda *_: self.mostrar_mini())
+        self.header.pack_end(self.btn_mini)
 
         menu = Gio.Menu()
         menu.append("Volver a escanear", "win.rescan")
@@ -284,7 +296,44 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._instalar_atajos()
 
-    # ------------------------------------------------------------ ecualizador
+    # ------------------------------------------------------- mini reproductor
+    def mostrar_mini(self) -> None:
+        if self.mini is None:
+            self.mini = MiniPlayer(self)
+        self.app_state["window_mode"] = "mini"
+        self.mini.actualizar_desde_estado()
+        self.set_visible(False)
+        self.mini.present()
+        self._save_now()
+
+    def restaurar_principal(self) -> None:
+        if self.mini is not None:
+            self.mini.ocultar()
+        self.app_state["window_mode"] = "main"
+        self.present()
+        self._save_now()
+
+    def get_cover_texture(self, song: Song | None):
+        """Carátula con caché en memoria; None -> icono genérico."""
+        if song is None:
+            return None
+        clave = song.path
+        if clave in self._cover_cache:
+            self._cover_cache.move_to_end(clave)
+            return self._cover_cache[clave]
+
+        textura = None
+        datos, _origen = get_cover_bytes(clave)
+        if datos:
+            try:
+                textura = Gdk.Texture.new_from_bytes(GLib.Bytes.new(datos))
+            except Exception:
+                textura = None
+        self._cover_cache[clave] = textura
+        while len(self._cover_cache) > self._cover_cache_max:
+            self._cover_cache.popitem(last=False)
+        return textura
+
     def _build_equalizer_page(self) -> Gtk.Widget:
         pagina = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         pagina.set_margin_top(18)
@@ -695,7 +744,12 @@ class MainWindow(Adw.ApplicationWindow):
             print("SMOKE: drag&drop callback:", bool(proveedor) and ok)
             print("SMOKE: nuevo orden:", [self.playlist[i].title for i in range(min(3, len(self.playlist)))])
             print("SMOKE: filas sincronizadas:", self._rows[self.playlist[0].id].song.id == self.playlist[0].id)
-        self.close()
+        if self.get_visible():
+            self.close()
+        else:
+            # Arranque en modo mini: la principal nunca se mostró, así que
+            # cerramos por la misma ruta lógica para guardar el estado.
+            self._on_close_request()
         return False
 
     # ------------------------------------------------------------- filas UI
@@ -774,14 +828,20 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_markers()
         self._actualizar_habilitados()
         self._update_play_icon()
+        if self.mini is not None:
+            self.mini.set_song(song)
         self._schedule_save()
 
     def _on_state_changed(self, estado: str) -> None:
         self._update_play_icon()
+        if self.mini is not None:
+            self.mini.update_play_icon()
         self._refresh_markers()
 
     def _on_stopped(self) -> None:
         self._update_play_icon()
+        if self.mini is not None:
+            self.mini.update_play_icon()
         self._refresh_markers()
         self.progress_adj.set_value(0)
         self.lbl_transcurrido.set_label("0:00")
@@ -827,6 +887,8 @@ class MainWindow(Adw.ApplicationWindow):
                 self.progress_adj.set_value(min(posicion, max(duracion, posicion)))
                 self.lbl_transcurrido.set_label(format_time(posicion))
             self._update_play_icon()
+            if self.mini is not None and self.mini.get_visible():
+                self.mini.update_play_icon()
         return True
 
     # --------------------------------------------------------- reordenación
@@ -908,6 +970,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_close_request(self, *_args) -> bool:
         self._closing = True
+        if self.mini is not None:
+            self.mini.guardar_posicion()
         for fuente in (self._save_source, self._volume_source):
             if fuente:
                 GLib.source_remove(fuente)
@@ -926,12 +990,15 @@ class MainWindow(Adw.ApplicationWindow):
 
 class MeloApplication(Adw.Application):
     def __init__(self, music_dir: Path | None = None, state_path: Path | None = None,
-                 audio_sink: str | None = None, smoke_test: bool = False):
+                 audio_sink: str | None = None, smoke_test: bool = False,
+                 smoke_mini: bool = False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.music_dir = music_dir or get_music_dir()
         self.state_path = state_path
         self.audio_sink = audio_sink
         self.smoke_test = smoke_test
+        self.smoke_mini = smoke_mini
+        self._main_window = None
         self.connect("activate", self._on_activate)
 
     def _on_activate(self, _app) -> None:
@@ -950,4 +1017,68 @@ class MeloApplication(Adw.Application):
             audio_sink=self.audio_sink,
             smoke_test=self.smoke_test,
         )
-        ventana.present()
+        self._main_window = ventana
+        if ventana.app_state.get("window_mode") == "mini":
+            ventana.mostrar_mini()
+        else:
+            ventana.present()
+        if self.smoke_mini:
+            GLib.timeout_add(1200, self._smoke_mini_iniciar)
+
+    # --------------------------------------------------------- smoke mini
+    def _smoke_mini_iniciar(self) -> bool:
+        ventana = self._main_window
+        if ventana is None:
+            return False
+        ventana.mostrar_mini()
+        GLib.timeout_add(900, self._smoke_mini_comprobar)
+        return False
+
+    def _smoke_mini_comprobar(self) -> bool:
+        from . import windowing
+
+        ventana = self._main_window
+        mini = ventana.mini if ventana else None
+        cancion = ventana.playlist.get(ventana.controller.current_id) if ventana else None
+        print("SMOKE-MINI: modo:", ventana.app_state.get("window_mode") if ventana else None)
+        print("SMOKE-MINI: principal visible:", ventana.get_visible() if ventana else None)
+        print("SMOKE-MINI: mini visible:", mini.get_visible() if mini else None)
+        print("SMOKE-MINI: título mini:", mini.title_label.get_text() if mini else None)
+        print("SMOKE-MINI: canción:", cancion.title if cancion else None)
+        print("SMOKE-MINI: reproduciendo:", ventana.player.is_playing() if ventana else None)
+        print("SMOKE-MINI: carátula:", mini.cover_stack.get_visible_child_name() if mini else None)
+        print("SMOKE-MINI: x11:", windowing.x11_available())
+        print("SMOKE-MINI: posicion viable:", windowing.positioning_supported())
+        xid = windowing.window_xid(mini) if mini else None
+        print("SMOKE-MINI: xid:", xid)
+        print("SMOKE-MINI: above:", windowing.get_above(mini) if mini else None)
+        if xid:
+            try:
+                salida = subprocess.run(
+                    ["xprop", "-id", str(xid), "_NET_WM_STATE"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                print("SMOKE-MINI: xprop:", salida.stdout.strip() or salida.stderr.strip())
+            except Exception as exc:
+                print("SMOKE-MINI: xprop error:", exc)
+
+        if mini is not None and ventana is not None:
+            antes = ventana.controller.current_id
+            mini.btn_play.emit("clicked")
+            print("SMOKE-MINI: tras botón play/pausa:", ventana.player.is_playing())
+            mini.btn_siguiente.emit("clicked")
+            print("SMOKE-MINI: tras siguiente cambió:", antes != ventana.controller.current_id)
+            mini.btn_anterior.emit("clicked")
+            print("SMOKE-MINI: tras anterior volvió:", antes == ventana.controller.current_id)
+            mini.btn_restaurar.emit("clicked")
+            print("SMOKE-MINI: tras restaurar principal visible:", ventana.get_visible(),
+                  "mini visible:", mini.get_visible(),
+                  "modo:", ventana.app_state.get("window_mode"))
+        GLib.timeout_add(400, self._smoke_mini_cerrar)
+        return False
+
+    def _smoke_mini_cerrar(self) -> bool:
+        self.quit()
+        return False
