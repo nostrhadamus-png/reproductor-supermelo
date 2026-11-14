@@ -5,6 +5,19 @@ Música del usuario (XDG), escanea sus subcarpetas, reproduce los formatos habit
 y permite reorganizar la playlist con arrastrar y soltar **sin tocar los archivos
 originales**. Todo funciona en local: sin cuentas, nube, streaming ni publicidad.
 
+## Requisitos e instalación
+
+Sistema Linux con escritorio GNOME (probado en Fedora 44). Necesitas Python 3,
+GTK4, libadwaita, PyGObject, Mutagen y GStreamer. Instalación en Fedora:
+
+```bash
+sudo dnf install python3 python3-gobject gtk4 libadwaita python3-mutagen \
+  gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav
+```
+
+Para ejecutar las pruebas se necesita además `ffmpeg` (no es necesario para usar
+la aplicación).
+
 ## Ejecutar
 
 ```bash
@@ -40,14 +53,9 @@ Crea `~/.local/share/applications/reproductor-melo.desktop` y el icono en
 `~/.local/share/icons/hicolor/scalable/apps/`. Después aparece en el menú de
 aplicaciones como **Reproductor Melo**.
 
-## Dependencias (Fedora 44)
+## Detalle de dependencias
 
-Ya estaban instaladas en este equipo. En otro Fedora:
-
-```bash
-sudo dnf install python3 python3-gobject gtk4 libadwaita python3-mutagen \
-  gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav
-```
+Paquetes incluidos en el comando de instalación anterior:
 
 | Paquete | Para qué sirve |
 |---|---|
@@ -182,3 +190,7 @@ prueba (unos 5 segundos); si la canción termina, el auto-avance cambiaría de p
   (PipeWire/PulseAudio vía GStreamer).
 - Para una canción dañada o con códec ausente se muestra un aviso y se salta a la
   siguiente sin bloquear la interfaz.
+
+## Licencia
+
+MIT. Consulta el archivo [LICENSE](LICENSE).

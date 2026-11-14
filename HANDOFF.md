@@ -106,8 +106,9 @@ resto borrable.
   `playing=True` en principal → mini → principal.
 - Apariencia: Medianoche/Oscuro sin `Theme parser`, `Gtk-WARNING` ni
   `Gtk-CRITICAL`; las 18 combinaciones de la fase anterior tampoco dieron
-  warnings. Capturas en `docs/capturas/`: `ocean-light-main.png` (970×817),
-  `forest-dark-eq.png` (970×817) y `medianoche-dark-mini.png` (340×100).
+  warnings. Capturas locales (no versionadas) en `docs/capturas/`:
+  `ocean-light-main.png` (970×817), `forest-dark-eq.png` (970×817) y
+  `medianoche-dark-mini.png` (340×100).
 
 ## 8. Limitaciones y deuda técnica
 
@@ -120,9 +121,9 @@ resto borrable.
   (solo se leyó).
 - Verificación visual limitada a 3 capturas; el resto se cubre con tests de
   CSS/contraste y arranques de humo.
-- Discrepancias: README no lista `ffmpeg` (necesario para tests; presente 8.1.3)
-  e `install.sh` no instala dependencias. No hay `TODO`/`FIXME`/`XXX`/`HACK` ni
-  código muerto evidente; sí la rama sobrante `mini-wip`.
+- `install.sh` no instala dependencias (el README ya documenta `ffmpeg` como
+  necesario solo para tests). No hay `TODO`/`FIXME`/`XXX`/`HACK` ni código
+  muerto evidente; sí la rama sobrante `mini-wip`.
 
 ## 9. Próximos pasos sugeridos
 

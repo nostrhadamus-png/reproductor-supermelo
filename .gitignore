@@ -1,3 +1,30 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
+venv/
+
+# Temporales
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+.cache/
+
+# Estado local de la aplicación
+state.json
+*.state.json
+
+# Audio (nunca versionar música)
+*.mp3
+*.flac
+*.wav
+*.ogg
+*.opus
+*.m4a
+*.aac
+
+# Capturas locales (no se publican)
+docs/capturas/
